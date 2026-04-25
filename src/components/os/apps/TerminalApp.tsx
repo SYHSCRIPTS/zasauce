@@ -109,7 +109,35 @@ export function TerminalApp() {
 
     if (cmd === "whoami") {
       appendLine("Identity scan required. Launching Camera Scan…", "warn");
+      const startedAt = Date.now();
       openApp("camera-scan");
+      appendLine("Waiting for scan results…", "dim");
+      const id = window.setInterval(() => {
+        try {
+          const raw = localStorage.getItem("zza-os:whoami:last");
+          if (!raw) return;
+          const parsed = JSON.parse(raw) as {
+            ts?: number;
+            personality?: string;
+            confidencePct?: number;
+            energyPct?: number;
+            egoPct?: number;
+            iqIndex?: number;
+            eqIndex?: number;
+          };
+          if (!parsed?.ts || parsed.ts < startedAt) return;
+          window.clearInterval(id);
+          appendLine("WHOAMI:", "ok");
+          appendLine(`  personality: ${parsed.personality ?? "unknown"}`);
+          appendLine(`  confidence:  ${Number(parsed.confidencePct ?? 0)}%`);
+          appendLine(`  energy:      ${Number(parsed.energyPct ?? 0)}%`);
+          appendLine(`  ego:         ${Number(parsed.egoPct ?? 0)}%`);
+          appendLine(`  iq index:    ${Number(parsed.iqIndex ?? 0)}`);
+          appendLine(`  eq index:    ${Number(parsed.eqIndex ?? 0)}`);
+        } catch {
+          // ignore
+        }
+      }, 250);
       return;
     }
 

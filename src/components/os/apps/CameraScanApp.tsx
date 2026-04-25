@@ -7,6 +7,9 @@ type AnalysisResult = {
   personality: "Calm" | "Active" | "Shy" | "Emotional" | "Focused" | "Restless" | "Neutral";
   confidencePct: number;
   energyPct: number;
+  egoPct: number;
+  iqIndex: number;
+  eqIndex: number;
 };
 
 type FaceBox = { x: number; y: number; w: number; h: number } | null;
@@ -58,13 +61,12 @@ export function CameraScanApp() {
     jitter: 0,
   });
 
-  // 4 phases (about 1s each) + result.
-  const phaseMs = 1000;
-  const analyzeDurationMs = 4 * phaseMs;
+  // Fast scan (shorter delay before showing results).
+  const phaseMs = 450;
+  const analyzeDurationMs = 3 * phaseMs;
 
   // Status text updated infrequently; drawing is canvas-only.
   const [phaseText, setPhaseText] = useState("INITIALIZING…");
-  const [lockText, setLockText] = useState<string | null>(null);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -136,16 +138,20 @@ export function CameraScanApp() {
         const faceDetector: FaceDetectorLike | null =
           typeof maybeFaceDetector === "function" ? new maybeFaceDetector() : null;
 
-        // MediaPipe FaceMesh + Pose (preferred).
+        // MediaPipe FaceMesh + Pose + Hands (preferred).
         type FaceLandmarkerLike = {
           detectForVideo: (video: HTMLVideoElement, ts: number) => { faceLandmarks?: NormalizedLandmark[][] };
         };
         type PoseLandmarkerLike = {
           detectForVideo: (video: HTMLVideoElement, ts: number) => { landmarks?: NormalizedLandmark[][] };
         };
+        type HandLandmarkerLike = {
+          detectForVideo: (video: HTMLVideoElement, ts: number) => { landmarks?: NormalizedLandmark[][] };
+        };
 
         let faceLandmarker: FaceLandmarkerLike | null = null;
         let poseLandmarker: PoseLandmarkerLike | null = null;
+        let handLandmarker: HandLandmarkerLike | null = null;
 
         try {
           setMpStatus("loading");
@@ -174,12 +180,23 @@ export function CameraScanApp() {
             runningMode: "VIDEO",
             numPoses: 1,
           });
+          const hl = await visionMod.HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+              delegate: "GPU",
+            },
+            runningMode: "VIDEO",
+            numHands: 2,
+          });
           faceLandmarker = fl as unknown as FaceLandmarkerLike;
           poseLandmarker = pl as unknown as PoseLandmarkerLike;
+          handLandmarker = hl as unknown as HandLandmarkerLike;
           setMpStatus("ready");
         } catch {
           faceLandmarker = null;
           poseLandmarker = null;
+          handLandmarker = null;
           setMpStatus("failed");
         }
 
@@ -193,6 +210,7 @@ export function CameraScanApp() {
         // Smoothing buffers
         const smoothFace: Array<{ x: number; y: number } | null> = [];
         const smoothPose: Array<{ x: number; y: number } | null> = [];
+        const smoothHands: Array<Array<{ x: number; y: number } | null>> = [[], []];
         let smoothBox: { x: number; y: number; w: number; h: number } | null = null;
 
         const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -300,6 +318,7 @@ export function CameraScanApp() {
           // MediaPipe inference (preferred).
           let facePts: Array<{ x: number; y: number } | null> | null = null;
           let posePts: Array<{ x: number; y: number } | null> | null = null;
+          let handPts: Array<Array<{ x: number; y: number } | null>> | null = null;
           let faceBox: FaceBox = null;
 
           if (faceLandmarker) {
@@ -337,6 +356,18 @@ export function CameraScanApp() {
             if (plm) {
               posePts = smoothPoints(plm, smoothPose);
             }
+          }
+
+          if (handLandmarker) {
+            const hr = handLandmarker.detectForVideo(v, performance.now());
+            const h0 = hr.landmarks?.[0] ?? null;
+            const h1 = hr.landmarks?.[1] ?? null;
+            const a = h0 ? smoothPoints(h0, smoothHands[0]!) : null;
+            const b = h1 ? smoothPoints(h1, smoothHands[1]!) : null;
+            handPts = [];
+            if (a) handPts.push(a);
+            if (b) handPts.push(b);
+            if (handPts.length === 0) handPts = null;
           }
 
           // Fallback face box via FaceDetector when MediaPipe not available or lost.
@@ -434,73 +465,49 @@ export function CameraScanApp() {
           ctx.stroke();
           ctx.restore();
 
-          // Target lock system
-          const haveFace = !!faceBox;
-          const lostForMs = performance.now() - lastSeenFaceTs;
-          const reacquiring = !haveFace && lastSeenFaceTs > 0 && lostForMs < 2500;
-
-          if (haveFace && faceBox) {
-            const fx = faceBox.x * dw;
-            const fy = faceBox.y * dh;
-            const fw = faceBox.w * dw;
-            const fh = faceBox.h * dh;
-            const pulse = 1 + Math.sin(performance.now() / 260) * 0.01;
-            const cx = fx + fw / 2;
-            const cy = fy + fh / 2;
-            const pw = fw * pulse;
-            const ph = fh * pulse;
-            const px = cx - pw / 2;
-            const py = cy - ph / 2;
-
-            ctx.save();
-            ctx.shadowColor = `rgba(34,197,94,${0.45})`;
-            ctx.shadowBlur = 18;
-            ctx.strokeStyle = `rgba(34,197,94,${0.78})`;
-            ctx.lineWidth = 1.5;
-            ctx.strokeRect(px, py, pw, ph);
-            ctx.restore();
-
-            // labels
-            ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-            ctx.fillStyle = `rgba(34,197,94,${0.85})`;
-            ctx.fillText("FACE LOCK", px + 8, py - 10);
-            ctx.fillStyle = `rgba(255,255,255,${0.55})`;
-            ctx.fillText("TRACKING", px + 8, py - 24);
-          } else if (reacquiring) {
-            ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-            ctx.fillStyle = "rgba(255,255,255,0.65)";
-            ctx.fillText("REACQUIRING TARGET…", 24, 40);
-          }
-
-          // Face mesh (cinematic: only a few connections, not all points)
+          // Face outline + key features (more realistic than minimal lines)
           if (facePts) {
-            const lineAlpha = 0.55 + scanIntensity * 0.25;
             ctx.save();
-            ctx.shadowColor = `rgba(34,197,94,${0.35})`;
+            ctx.shadowColor = `rgba(34,197,94,${0.30})`;
             ctx.shadowBlur = 14;
-            ctx.strokeStyle = `rgba(34,197,94,${lineAlpha})`;
-            ctx.lineWidth = 1.2;
+            ctx.strokeStyle = `rgba(34,197,94,${0.55 + scanIntensity * 0.25})`;
+            ctx.lineWidth = 1.6;
             ctx.lineCap = "round";
+            ctx.lineJoin = "round";
 
-            // Minimal set of connections (eyes + mouth outline)
-            const segs: Array<[number, number]> = [
-              [33, 133],
-              [362, 263],
-              [61, 291],
-              [61, 13],
-              [13, 291],
-              [33, 1],
-              [263, 1],
+            const FACE_OVAL = [
+              10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148,
+              176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10,
             ];
-            for (const [a, b] of segs) {
-              const A = facePts[a];
-              const B = facePts[b];
-              if (!A || !B) continue;
+
+            const drawPath = (idxs: number[]) => {
+              let started = false;
               ctx.beginPath();
-              ctx.moveTo(A.x * dw, A.y * dh);
-              ctx.lineTo(B.x * dw, B.y * dh);
-              ctx.stroke();
-            }
+              for (const i of idxs) {
+                const p = facePts[i];
+                if (!p) continue;
+                const x = p.x * dw;
+                const y = p.y * dh;
+                if (!started) {
+                  ctx.moveTo(x, y);
+                  started = true;
+                } else {
+                  ctx.lineTo(x, y);
+                }
+              }
+              if (started) ctx.stroke();
+            };
+
+            // outline
+            drawPath(FACE_OVAL);
+
+            // eyes (simple loops)
+            drawPath([33, 160, 158, 133, 153, 144, 33]);
+            drawPath([362, 385, 387, 263, 373, 380, 362]);
+
+            // mouth
+            drawPath([61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291, 61]);
+
             ctx.restore();
           }
 
@@ -541,21 +548,68 @@ export function CameraScanApp() {
             ctx.restore();
           }
 
+          // Hand skeletons
+          if (handPts) {
+            const HAND: Array<[number, number]> = [
+              [0, 1],
+              [1, 2],
+              [2, 3],
+              [3, 4],
+              [0, 5],
+              [5, 6],
+              [6, 7],
+              [7, 8],
+              [5, 9],
+              [9, 10],
+              [10, 11],
+              [11, 12],
+              [9, 13],
+              [13, 14],
+              [14, 15],
+              [15, 16],
+              [13, 17],
+              [17, 18],
+              [18, 19],
+              [19, 20],
+              [0, 17],
+            ];
+
+            ctx.save();
+            ctx.shadowColor = `rgba(56,189,248,${0.25})`;
+            ctx.shadowBlur = 16;
+            ctx.strokeStyle = `rgba(56,189,248,${0.55 + scanIntensity * 0.25})`;
+            ctx.lineWidth = 2.0;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+
+            for (const hpts of handPts) {
+              for (const [a, b] of HAND) {
+                const A = hpts[a];
+                const B = hpts[b];
+                if (!A || !B) continue;
+                ctx.beginPath();
+                ctx.moveTo(A.x * dw, A.y * dh);
+                ctx.lineTo(B.x * dw, B.y * dh);
+                ctx.stroke();
+              }
+            }
+            ctx.restore();
+          }
+
           // UI / phase state updates (throttled)
           const elapsed = performance.now() - startedAt;
           const phase = Math.min(4, Math.floor(elapsed / phaseMs));
           if (phase !== lastPhase) {
             lastPhase = phase;
             if (phase === 0) setPhaseText("INITIALIZING…");
-            if (phase === 1) setPhaseText(haveFace ? "FACE LOCKED" : "SEARCHING FACE…");
-            if (phase === 2) setPhaseText("MAPPING STRUCTURE…");
-            if (phase === 3) setPhaseText("ANALYZING PATTERN…");
+            if (phase === 1) setPhaseText("MAPPING…");
+            if (phase === 2) setPhaseText("ANALYZING…");
+            if (phase === 3) setPhaseText("FINALIZING…");
             if (phase >= 4) setPhaseText("COMPLETE");
           }
 
           if (performance.now() - lastUiUpdate > 180) {
             lastUiUpdate = performance.now();
-            setLockText(haveFace ? "FACE LOCK" : reacquiring ? "REACQUIRING TARGET…" : "NO TARGET");
             setMetrics((m) => {
               const next = {
                 movement: movementEMA,
@@ -587,9 +641,23 @@ export function CameraScanApp() {
               clamp(0.35 + stability * 0.30 + centering * 0.25 + (1 - jitter) * 0.20, 0, 0.99) * 100,
             );
             const energyPct = Math.round(clamp(movement * 0.75 + jitter * 0.25, 0, 1) * 100);
+            // Extra fun indices (still derived only from the same 4 signals).
+            const egoPct = Math.round(clamp(centering * 0.75 + (1 - stability) * 0.25, 0, 1) * 100);
+            const iqIndex = Math.round(80 + clamp(stability * 0.65 + (1 - jitter) * 0.35, 0, 1) * 60);
+            const eqIndex = Math.round(80 + clamp((1 - jitter) * 0.55 + centering * 0.25 + stability * 0.20, 0, 1) * 60);
 
-            setResult({ personality, confidencePct, energyPct });
+            const out = { personality, confidencePct, energyPct, egoPct, iqIndex, eqIndex };
+            setResult(out);
             setStatus("done");
+            // Publish for Terminal `whoami`
+            try {
+              localStorage.setItem(
+                "zza-os:whoami:last",
+                JSON.stringify({ ts: Date.now(), ...out }),
+              );
+            } catch {
+              // ignore
+            }
             return;
           }
 
@@ -643,7 +711,7 @@ export function CameraScanApp() {
                 {status === "done" && "COMPLETE"}
               </div>
               <div className="mt-1 font-mono text-[10px] text-emerald-100/45">
-                mp: {mpStatus} · {lockText ?? ""}
+                mp: {mpStatus}
               </div>
             </div>
 
@@ -683,6 +751,9 @@ export function CameraScanApp() {
                 <div>{result?.personality}</div>
                 <div>Confidence: {result?.confidencePct}%</div>
                 <div>Energy: {result?.energyPct}%</div>
+                <div>Ego: {result?.egoPct}%</div>
+                <div>IQ Index: {result?.iqIndex}</div>
+                <div>EQ Index: {result?.eqIndex}</div>
               </div>
             )}
           </div>
