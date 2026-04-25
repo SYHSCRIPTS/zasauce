@@ -67,6 +67,7 @@ export function CameraScanApp() {
 
   // Status text updated infrequently; drawing is canvas-only.
   const [phaseText, setPhaseText] = useState("INITIALIZING…");
+  const didFinishRef = useRef(false);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -511,10 +512,11 @@ export function CameraScanApp() {
           // Face outline + key features (more realistic than minimal lines)
           if (facePts) {
             ctx.save();
-            ctx.shadowColor = `rgba(34,197,94,${0.30})`;
+            // Use OS accent for visibility across themes.
+            ctx.shadowColor = `rgba(var(--os-accent) / 0.35)`;
             ctx.shadowBlur = 14;
-            ctx.strokeStyle = `rgba(34,197,94,${0.55 + scanIntensity * 0.25})`;
-            ctx.lineWidth = 1.6;
+            ctx.strokeStyle = `rgba(var(--os-accent) / ${0.60 + scanIntensity * 0.20})`;
+            ctx.lineWidth = 2.2;
             ctx.lineCap = "round";
             ctx.lineJoin = "round";
 
@@ -671,8 +673,9 @@ export function CameraScanApp() {
 
           ctx.restore();
 
-          if (elapsed >= analyzeDurationMs && status !== "done") {
-            stop();
+          if (elapsed >= analyzeDurationMs && !didFinishRef.current) {
+            // Do NOT stop the camera/RAF; we want the scan overlay to keep tracking.
+            didFinishRef.current = true;
 
             const movement = clamp(movementEMA, 0, 1);
             const stability = clamp(stabilityEMA, 0, 1);
@@ -707,7 +710,6 @@ export function CameraScanApp() {
             } catch {
               // ignore
             }
-            return;
           }
 
           rafRef.current = requestAnimationFrame(() => {
