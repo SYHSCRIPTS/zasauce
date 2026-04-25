@@ -206,6 +206,10 @@ export function CameraScanApp() {
         let jitterEMA = 0;
         let centeringEMA = 0.65; // assume decent centering until detected
         let stabilityEMA = 0.65;
+        let poseMotionEMA = 0;
+        let faceMotionEMA = 0;
+        let prevPoseCenter: { x: number; y: number } | null = null;
+        let prevFaceCenter: { x: number; y: number } | null = null;
 
         // Smoothing buffers
         const smoothFace: Array<{ x: number; y: number } | null> = [];
@@ -403,6 +407,46 @@ export function CameraScanApp() {
             const proxy = clamp(0.55 + stabilityEMA * 0.35 - movementEMA * 0.15, 0, 1);
             centeringEMA = centeringEMA * 0.98 + proxy * 0.02;
           }
+
+          // Extra motion signal: landmark-based motion (catches jumping/waving better than frame-diff alone).
+          // We compute a simple "center" for face and pose and track its velocity.
+          if (posePts) {
+            const idxs = [11, 12, 23, 24]; // shoulders + hips (stable torso anchors)
+            let sx = 0,
+              sy = 0,
+              n = 0;
+            for (const i of idxs) {
+              const p = posePts[i];
+              if (!p) continue;
+              sx += p.x;
+              sy += p.y;
+              n += 1;
+            }
+            if (n > 0) {
+              const c = { x: sx / n, y: sy / n };
+              if (prevPoseCenter) {
+                const d = Math.hypot(c.x - prevPoseCenter.x, c.y - prevPoseCenter.y);
+                // scale to 0..1-ish for typical movements
+                const m = clamp(d * 12, 0, 1);
+                poseMotionEMA = poseMotionEMA * 0.82 + m * 0.18;
+              }
+              prevPoseCenter = c;
+            }
+          }
+
+          if (faceBox) {
+            const c = { x: faceBox.x + faceBox.w / 2, y: faceBox.y + faceBox.h / 2 };
+            if (prevFaceCenter) {
+              const d = Math.hypot(c.x - prevFaceCenter.x, c.y - prevFaceCenter.y);
+              const m = clamp(d * 18, 0, 1);
+              faceMotionEMA = faceMotionEMA * 0.82 + m * 0.18;
+            }
+            prevFaceCenter = c;
+          }
+
+          // Merge motion signals: take the strongest cue.
+          const mergedMotion = Math.max(movementEMA, poseMotionEMA, faceMotionEMA);
+          movementEMA = movementEMA * 0.55 + mergedMotion * 0.45;
 
           // Draw "scan" overlay
           ctx.save();
@@ -640,7 +684,13 @@ export function CameraScanApp() {
             const confidencePct = Math.round(
               clamp(0.35 + stability * 0.30 + centering * 0.25 + (1 - jitter) * 0.20, 0, 0.99) * 100,
             );
-            const energyPct = Math.round(clamp(movement * 0.75 + jitter * 0.25, 0, 1) * 100);
+            // Energy: emphasize landmark motion (big movements) + some jitter.
+            const energySignal = clamp(
+              Math.max(movement, poseMotionEMA, faceMotionEMA) * 0.80 + jitter * 0.20,
+              0,
+              1,
+            );
+            const energyPct = Math.round(energySignal * 100);
             // Extra fun indices (still derived only from the same 4 signals).
             const egoPct = Math.round(clamp(centering * 0.75 + (1 - stability) * 0.25, 0, 1) * 100);
             const iqIndex = Math.round(80 + clamp(stability * 0.65 + (1 - jitter) * 0.35, 0, 1) * 60);
