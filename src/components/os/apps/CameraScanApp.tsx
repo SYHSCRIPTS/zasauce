@@ -500,7 +500,9 @@ export function CameraScanApp() {
           }
 
           // Scan line (speed increases early)
-          const speed = 0.9 + Math.max(0, 1.4 - (performance.now() - startedAt) / 2500);
+          const speed =
+            0.9 +
+            Math.max(0, 1.4 - (performance.now() - startedAtRef.current) / 2500);
           const lineY = ((performance.now() / (1600 / speed)) % 1) * dh;
           ctx.save();
           ctx.shadowColor = `rgba(34,197,94,${0.55})`;
