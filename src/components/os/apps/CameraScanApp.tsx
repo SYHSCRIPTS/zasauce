@@ -94,7 +94,6 @@ export function CameraScanApp() {
         setStatus("requesting");
         setErrorMsg(null);
         setPhaseText("INITIALIZING…");
-        setLockText(null);
 
         try {
           const v = Number(
