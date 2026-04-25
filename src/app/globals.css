@@ -1,0 +1,206 @@
+@import "tailwindcss";
+
+:root {
+  /* Default: slightly darker "midnight glass" */
+  --background: #0b1220;
+  --foreground: #e6edf7;
+  --glass: rgba(15, 23, 42, 0.38);
+  --glass-strong: rgba(15, 23, 42, 0.52);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --shadow-glass: 0 18px 56px rgba(0, 0, 0, 0.45);
+  --highlight: rgba(255, 255, 255, 0.65);
+  --os-accent: 56 189 248; /* default: cyber-blue */
+  --os-accent2: 168 85 247;
+  --os-blur: 18px;
+  --os-scale: 1;
+  --scan-intensity: 0.75;
+
+  /* Background palette (driven by theme presets) */
+  --os-bg1: 56 189 248;
+  --os-bg2: 168 85 247;
+  --os-bg3: 20 184 166;
+  --os-bg-base1: #0b1220;
+  --os-bg-base2: #0a1628;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, Segoe UI, Roboto,
+    Arial, Helvetica, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+.os-desktop-bg {
+  background:
+    radial-gradient(1200px 700px at 18% 12%, rgba(var(--os-bg1) / 0.18), transparent 62%),
+    radial-gradient(1000px 600px at 78% 16%, rgba(var(--os-bg2) / 0.16), transparent 64%),
+    radial-gradient(900px 520px at 44% 92%, rgba(var(--os-bg3) / 0.12), transparent 62%),
+    linear-gradient(180deg, color-mix(in srgb, var(--os-bg-base1) 92%, transparent), color-mix(in srgb, var(--os-bg-base2) 96%, transparent));
+}
+
+.os-scanlines {
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(15, 23, 42, 0.045) 0px,
+    rgba(15, 23, 42, 0.045) 1px,
+    transparent 2px,
+    transparent 7px
+  );
+  mix-blend-mode: multiply;
+  opacity: 0.14;
+  pointer-events: none;
+}
+
+.os-glow-text {
+  text-shadow: 0 0 18px rgba(var(--os-accent) / 0.22);
+}
+
+.os-glass {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-glass);
+  /* Disable backdrop blur (reduces “blurry while moving” artifacts) */
+  backdrop-filter: saturate(1.25);
+}
+
+.os-accent-shadow {
+  box-shadow: 0 18px 46px rgba(var(--os-accent) / 0.14);
+}
+
+.os-accent-text {
+  color: rgb(var(--os-accent));
+}
+
+.os-accent-border {
+  border-color: rgba(var(--os-accent) / 0.28);
+}
+
+.os-hover-glow {
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+.os-hover-glow:hover {
+  box-shadow: 0 18px 56px rgba(var(--os-accent) / 0.12);
+}
+
+.os-hover-glow:active {
+  transform: scale(0.99);
+}
+
+.os-liquid-edge {
+  position: relative;
+}
+
+.os-liquid-edge::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(520px 140px at 10% 0%, rgba(255, 255, 255, 0.28), transparent 60%),
+    radial-gradient(420px 170px at 90% 0%, rgba(255, 255, 255, 0.20), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0));
+  opacity: 0.95;
+  mix-blend-mode: overlay;
+}
+
+@keyframes osWindowIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.os-window-in {
+  animation: osWindowIn 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes osCursorBlink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.os-terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  transform: translateY(2px);
+  border-radius: 2px;
+  background: rgba(34, 197, 94, 0.95);
+  box-shadow: 0 10px 18px rgba(34, 197, 94, 0.18);
+  animation: osCursorBlink 1s steps(1) infinite;
+}
+
+@keyframes osScanLine {
+  0% {
+    transform: translateY(-10%);
+    opacity: 0.0;
+  }
+  10% {
+    opacity: 0.85;
+  }
+  90% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(110%);
+    opacity: 0.0;
+  }
+}
+
+@keyframes osAnalyzing {
+  0% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.45;
+  }
+}
+
+.os-scanline {
+  animation: osScanLine 2.25s linear infinite;
+}
+
+.os-analyzing {
+  animation: osAnalyzing 1.1s ease-in-out infinite;
+}
+
+@keyframes osGlitch {
+  0% { transform: translate(0, 0); filter: none; opacity: 1; }
+  12% { transform: translate(-1px, 0); filter: hue-rotate(10deg); }
+  24% { transform: translate(2px, 0); filter: hue-rotate(-10deg); }
+  36% { transform: translate(-2px, 0); opacity: 0.92; }
+  48% { transform: translate(1px, 0); }
+  60% { transform: translate(0, 0); filter: none; opacity: 1; }
+  100% { transform: translate(0, 0); filter: none; opacity: 1; }
+}
+
+.os-glitch {
+  animation: osGlitch 240ms steps(2, end) 1;
+}
