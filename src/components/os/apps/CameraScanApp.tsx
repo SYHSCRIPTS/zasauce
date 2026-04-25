@@ -71,6 +71,7 @@ export function CameraScanApp() {
   const [phaseText, setPhaseText] = useState("INITIALIZING…");
   const didFinishRef = useRef(false);
   const lastPublishRef = useRef(0);
+  const dismissedRef = useRef(false);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -124,6 +125,7 @@ export function CameraScanApp() {
         startedAtRef.current = performance.now();
         didFinishRef.current = false;
         lastPublishRef.current = 0;
+        dismissedRef.current = false;
         setStatus("running");
 
         const can = canvasRef.current;
@@ -704,7 +706,7 @@ export function CameraScanApp() {
             const out = { personality, confidencePct, energyPct, egoPct, iqIndex, eqIndex };
             setResult(out);
             setStatus("done");
-            setShowResult(true);
+            if (!dismissedRef.current) setShowResult(true);
 
             // Publish for Terminal `whoami`
             try {
@@ -827,7 +829,10 @@ export function CameraScanApp() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setShowResult(false)}
+                    onClick={() => {
+                      dismissedRef.current = true;
+                      setShowResult(false);
+                    }}
                     className="shrink-0 h-8 w-9 rounded-xl border border-white/10 bg-black/20 hover:bg-black/30 text-[12px] font-mono text-emerald-100/80"
                     title="Close"
                     aria-label="Close"
@@ -843,6 +848,7 @@ export function CameraScanApp() {
                       didFinishRef.current = false;
                       lastPublishRef.current = 0;
                       startedAtRef.current = performance.now();
+                      dismissedRef.current = false;
                       setStatus("running");
                       setShowResult(false);
                     }}
