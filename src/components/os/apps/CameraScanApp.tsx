@@ -46,12 +46,14 @@ export function CameraScanApp() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenRef = useRef<HTMLCanvasElement | null>(null);
   const rafRef = useRef<number | null>(null);
+  const startedAtRef = useRef<number>(0);
 
   const [status, setStatus] = useState<
     "idle" | "requesting" | "running" | "error" | "done"
   >("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [showResult, setShowResult] = useState(false);
   const [mpStatus, setMpStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle");
 
   const [metrics, setMetrics] = useState({
@@ -61,17 +63,17 @@ export function CameraScanApp() {
     jitter: 0,
   });
 
-  // Fast scan (shorter delay before showing results).
-  const phaseMs = 450;
-  const analyzeDurationMs = 3 * phaseMs;
+  // Ultra-fast scan (sub-1s). Still samples multiple frames for motion.
+  const phaseMs = 220;
+  const analyzeDurationMs = 4 * phaseMs; // ~880ms
 
   // Status text updated infrequently; drawing is canvas-only.
   const [phaseText, setPhaseText] = useState("INITIALIZING…");
   const didFinishRef = useRef(false);
+  const lastPublishRef = useRef(0);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
-    let startedAt = 0;
     let lastPhase = -1;
     let lastUiUpdate = 0;
     let lastSeenFaceTs = 0;
@@ -119,7 +121,9 @@ export function CameraScanApp() {
         v.srcObject = stream;
         await v.play();
 
-        startedAt = performance.now();
+        startedAtRef.current = performance.now();
+        didFinishRef.current = false;
+        lastPublishRef.current = 0;
         setStatus("running");
 
         const can = canvasRef.current;
@@ -513,10 +517,10 @@ export function CameraScanApp() {
           if (facePts) {
             ctx.save();
             // Use OS accent for visibility across themes.
-            ctx.shadowColor = `rgba(var(--os-accent) / 0.35)`;
-            ctx.shadowBlur = 14;
-            ctx.strokeStyle = `rgba(var(--os-accent) / ${0.60 + scanIntensity * 0.20})`;
-            ctx.lineWidth = 2.2;
+            ctx.shadowColor = `rgba(var(--os-accent) / 0.65)`;
+            ctx.shadowBlur = 22;
+            ctx.strokeStyle = `rgba(var(--os-accent) / ${0.82 + scanIntensity * 0.14})`;
+            ctx.lineWidth = 2.8;
             ctx.lineCap = "round";
             ctx.lineJoin = "round";
 
@@ -642,7 +646,7 @@ export function CameraScanApp() {
           }
 
           // UI / phase state updates (throttled)
-          const elapsed = performance.now() - startedAt;
+          const elapsed = performance.now() - startedAtRef.current;
           const phase = Math.min(4, Math.floor(elapsed / phaseMs));
           if (phase !== lastPhase) {
             lastPhase = phase;
@@ -673,10 +677,7 @@ export function CameraScanApp() {
 
           ctx.restore();
 
-          if (elapsed >= analyzeDurationMs && !didFinishRef.current) {
-            // Do NOT stop the camera/RAF; we want the scan overlay to keep tracking.
-            didFinishRef.current = true;
-
+          const publish = () => {
             const movement = clamp(movementEMA, 0, 1);
             const stability = clamp(stabilityEMA, 0, 1);
             const centering = clamp(centeringEMA, 0, 1);
@@ -686,21 +687,23 @@ export function CameraScanApp() {
             const confidencePct = Math.round(
               clamp(0.35 + stability * 0.30 + centering * 0.25 + (1 - jitter) * 0.20, 0, 0.99) * 100,
             );
-            // Energy: emphasize landmark motion (big movements) + some jitter.
-            const energySignal = clamp(
-              Math.max(movement, poseMotionEMA, faceMotionEMA) * 0.80 + jitter * 0.20,
-              0,
-              1,
-            );
-            const energyPct = Math.round(energySignal * 100);
+
+            // Energy: motion-heavy and continuously updated (no longer stuck).
+            const motion = clamp(Math.max(movement, poseMotionEMA, faceMotionEMA), 0, 1);
+            const energyPct = Math.round(clamp(motion * 0.92 + jitter * 0.08, 0, 1) * 100);
+
             // Extra fun indices (still derived only from the same 4 signals).
             const egoPct = Math.round(clamp(centering * 0.75 + (1 - stability) * 0.25, 0, 1) * 100);
             const iqIndex = Math.round(80 + clamp(stability * 0.65 + (1 - jitter) * 0.35, 0, 1) * 60);
-            const eqIndex = Math.round(80 + clamp((1 - jitter) * 0.55 + centering * 0.25 + stability * 0.20, 0, 1) * 60);
+            const eqIndex = Math.round(
+              80 + clamp((1 - jitter) * 0.55 + centering * 0.25 + stability * 0.20, 0, 1) * 60,
+            );
 
             const out = { personality, confidencePct, energyPct, egoPct, iqIndex, eqIndex };
             setResult(out);
             setStatus("done");
+            setShowResult(true);
+
             // Publish for Terminal `whoami`
             try {
               localStorage.setItem(
@@ -709,6 +712,18 @@ export function CameraScanApp() {
               );
             } catch {
               // ignore
+            }
+          };
+
+          // Publish first result quickly, then keep refining in the background.
+          if (elapsed >= analyzeDurationMs && !didFinishRef.current) {
+            didFinishRef.current = true;
+            publish();
+          } else if (didFinishRef.current) {
+            const nowTs = performance.now();
+            if (nowTs - lastPublishRef.current > 650) {
+              lastPublishRef.current = nowTs;
+              publish();
             }
           }
 
@@ -790,23 +805,52 @@ export function CameraScanApp() {
             ) : status !== "done" ? (
               <div className="rounded-2xl border border-emerald-400/15 bg-black/35 backdrop-blur px-4 py-3">
                 <div className="font-mono text-[12px] text-emerald-100/80">
-                  Hold still for {Math.round(analyzeDurationMs / 1000)}s…
+                  Scanning…
                 </div>
                 <div className="mt-1 font-mono text-[11px] text-emerald-100/55">
                   (Based only on movement, posture stability, face centering, jitter)
                 </div>
               </div>
-            ) : (
+            ) : showResult ? (
               <div className="rounded-2xl border border-emerald-400/20 bg-black/40 backdrop-blur px-4 py-3 font-mono text-[13px] text-emerald-100">
-                {/* AFTER 3–5 SECONDS OUTPUT ONLY */}
-                <div>{result?.personality}</div>
-                <div>Confidence: {result?.confidencePct}%</div>
-                <div>Energy: {result?.energyPct}%</div>
-                <div>Ego: {result?.egoPct}%</div>
-                <div>IQ Index: {result?.iqIndex}</div>
-                <div>EQ Index: {result?.eqIndex}</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    {/* OUTPUT */}
+                    <div>{result?.personality}</div>
+                    <div>Confidence: {result?.confidencePct}%</div>
+                    <div>Energy: {result?.energyPct}%</div>
+                    <div>Ego: {result?.egoPct}%</div>
+                    <div>IQ Index: {result?.iqIndex}</div>
+                    <div>EQ Index: {result?.eqIndex}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowResult(false)}
+                    className="shrink-0 h-8 w-9 rounded-xl border border-white/10 bg-black/20 hover:bg-black/30 text-[12px] font-mono text-emerald-100/80"
+                    title="Close"
+                    aria-label="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="mt-3 flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Restart scan timer without stopping camera.
+                      didFinishRef.current = false;
+                      lastPublishRef.current = 0;
+                      startedAtRef.current = performance.now();
+                      setStatus("running");
+                      setShowResult(false);
+                    }}
+                    className="rounded-xl border border-white/10 bg-black/20 hover:bg-black/30 px-3 py-2 text-[11px] font-mono text-emerald-100/80"
+                  >
+                    Rescan
+                  </button>
+                </div>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
